@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "lib",
         "Build an exportable C library.",
     );
