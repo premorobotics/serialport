@@ -10,7 +10,7 @@
 !.gitignore
 !build.zig
 !build.zig.zon
-!.github/**/*.yml
+!.github/**
 
 !*.zig
 
