@@ -3,19 +3,22 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 pub const linux = @import("backend/linux.zig");
-pub const macos = @import("backend/macos.zig");
 pub const windows = @import("backend/windows.zig");
 
 pub fn iterate(io: std.Io) !Iterator {
     switch (builtin.target.os.tag) {
-        .linux, .macos, .windows => return backend.iterate(io),
+        .linux, .windows => return backend.iterate(io),
         else => @compileError("unsupported OS"),
     }
 }
 
-pub fn open(io: std.Io, file_path: []const u8, flags: std.Io.File.OpenFlags) !Port {
+pub fn open(
+    io: std.Io,
+    file_path: []const u8,
+    flags: std.Io.Dir.OpenFileOptions,
+) !Port {
     return switch (builtin.target.os.tag) {
-        .linux, .macos, .windows => .{ ._impl = .{
+        .linux, .windows => .{ ._impl = .{
             .file = try backend.open(io, file_path, flags),
         } },
         else => @compileError("unsupported OS"),
@@ -23,7 +26,7 @@ pub fn open(io: std.Io, file_path: []const u8, flags: std.Io.File.OpenFlags) !Po
 }
 
 const PortImpl = switch (builtin.target.os.tag) {
-    .linux, .macos => struct {
+    .linux => struct {
         file: std.Io.File,
         orig_termios: ?std.posix.termios = null,
     },
@@ -37,29 +40,29 @@ pub const Port = struct {
     _impl: PortImpl,
 
     pub const Reader = switch (builtin.target.os.tag) {
-        .linux, .macos => std.Io.File.Reader,
+        .linux => std.Io.File.Reader,
         .windows => windows.Reader,
         else => @compileError("unsupported OS"),
     };
     pub const ReadError = switch (builtin.target.os.tag) {
-        .linux, .macos => std.Io.File.Reader.Error,
+        .linux => std.Io.File.Reader.Error,
         .windows => windows.ReadError,
         else => @compileError("unsupported OS"),
     };
     pub const Writer = switch (builtin.target.os.tag) {
-        .linux, .macos => std.Io.File.Writer,
+        .linux => std.Io.File.Writer,
         .windows => windows.Writer,
         else => @compileError("unsupported OS"),
     };
     pub const WriteError = switch (builtin.target.os.tag) {
-        .linux, .macos => std.Io.File.Writer.Error,
+        .linux => std.Io.File.Writer.Error,
         .windows => windows.WriteError,
         else => @compileError("unsupported OS"),
     };
 
     pub fn close(self: *@This(), io: std.Io) void {
         switch (comptime builtin.target.os.tag) {
-            .linux, .macos => {
+            .linux => {
                 if (self._impl.orig_termios) |orig_termios| {
                     std.posix.tcsetattr(
                         self._impl.file.handle,
@@ -79,7 +82,7 @@ pub const Port = struct {
 
     pub fn configure(self: *@This(), config: Config) !void {
         switch (comptime builtin.target.os.tag) {
-            .linux, .macos => {
+            .linux => {
                 const termios = try backend.configure(
                     self._impl.file,
                     config,
@@ -97,7 +100,7 @@ pub const Port = struct {
 
     pub fn reader(self: @This(), io: std.Io, buffer: []u8) Reader {
         switch (comptime builtin.target.os.tag) {
-            .linux, .macos => return self._impl.file.readerStreaming(
+            .linux => return self._impl.file.readerStreaming(
                 io,
                 buffer,
             ),
@@ -108,7 +111,7 @@ pub const Port = struct {
 
     pub fn writer(self: @This(), io: std.Io, buffer: []u8) Writer {
         switch (comptime builtin.target.os.tag) {
-            .linux, .macos => return self._impl.file.writerStreaming(
+            .linux => return self._impl.file.writerStreaming(
                 io,
                 buffer,
             ),
@@ -197,19 +200,22 @@ pub const Stub = struct {
     name: []const u8,
     path: []const u8,
 
-    pub fn open(self: @This(), io: std.Io, flags: std.Io.File.OpenFlags) !Port {
+    pub fn open(
+        self: @This(),
+        io: std.Io,
+        flags: std.Io.Dir.OpenFileOptions,
+    ) !Port {
         return serialport.open(io, self.path, flags);
     }
 };
 
 pub const Iterator = switch (builtin.target.os.tag) {
-    .linux, .macos, .windows => backend.Iterator,
+    .linux, .windows => backend.Iterator,
     else => @compileError("unsupported OS"),
 };
 
 const backend = switch (builtin.target.os.tag) {
     .windows => windows,
-    .macos => macos,
     .linux => linux,
     else => @compileError("unsupported OS"),
 };
@@ -223,7 +229,6 @@ test {
 
     switch (builtin.target.os.tag) {
         .linux => std.testing.refAllDecls(linux),
-        .macos => std.testing.refAllDecls(macos),
         .windows => std.testing.refAllDecls(windows),
         else => @compileError("unsupported OS"),
     }
