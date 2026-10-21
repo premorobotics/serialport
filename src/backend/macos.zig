@@ -28,20 +28,20 @@ pub fn configure(
 
     if (config.input_baud_rate) |ibr| {
         switch (std.posix.errno(
-            c.cfsetospeed(@ptrCast(&settings), @intFromEnum(config.baud_rate)),
+            c.cfsetospeed(@ptrCast(&settings), @backingInt(config.baud_rate)),
         )) {
             .SUCCESS => {},
             else => |err| return std.posix.unexpectedErrno(err),
         }
         switch (std.posix.errno(
-            c.cfsetispeed(@ptrCast(&settings), @intFromEnum(ibr)),
+            c.cfsetispeed(@ptrCast(&settings), @backingInt(ibr)),
         )) {
             .SUCCESS => {},
             else => |err| return std.posix.unexpectedErrno(err),
         }
     } else {
         switch (std.posix.errno(
-            c.cfsetspeed(@ptrCast(&settings), @intFromEnum(config.baud_rate)),
+            c.cfsetspeed(@ptrCast(&settings), @backingInt(config.baud_rate)),
         )) {
             .SUCCESS => {},
             else => |err| return std.posix.unexpectedErrno(err),
@@ -53,14 +53,14 @@ pub fn configure(
 
     settings.cflag.CREAD = true;
     settings.cflag.CSTOPB = config.stop_bits == .two;
-    settings.cflag.CSIZE = @enumFromInt(@intFromEnum(config.data_bits));
+    settings.cflag.CSIZE = @fromBackingInt(@intCast(@backingInt(config.data_bits)));
 
     // Minimum arrived bytes before read returns.
-    settings.cc[@intFromEnum(std.posix.V.MIN)] = 0;
+    settings.cc[@backingInt(std.posix.V.MIN)] = 0;
     // Inter-byte timeout before read returns.
-    settings.cc[@intFromEnum(std.posix.V.TIME)] = 0;
-    settings.cc[@intFromEnum(std.posix.V.START)] = 0x11;
-    settings.cc[@intFromEnum(std.posix.V.STOP)] = 0x13;
+    settings.cc[@backingInt(std.posix.V.TIME)] = 0;
+    settings.cc[@backingInt(std.posix.V.START)] = 0x11;
+    settings.cc[@backingInt(std.posix.V.STOP)] = 0x13;
 
     try std.posix.tcsetattr(port.handle, .NOW, settings);
     return orig_termios;
