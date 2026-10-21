@@ -73,10 +73,9 @@ pub const Writer = struct {
 pub fn open(
     _: std.Io,
     path: []const u8,
-    flags: std.Io.File.OpenFlags,
+    flags: std.Io.Dir.OpenFileOptions,
 ) (Wtf8ToWtf16Error || std.Io.Dir.RealPathFileError)!std.Io.File {
-    var path_wtf16: [windows.PATH_MAX_WIDE:0]u16 =
-        .{0} ** windows.PATH_MAX_WIDE;
+    var path_wtf16: [windows.PATH_MAX_WIDE:0]u16 = @splat(0);
     const path_wtf16_len = try windows.wtf8ToWtf16Le(
         &path_wtf16,
         path,
@@ -127,8 +126,8 @@ pub fn configure(port: std.Io.File, config: serialport.Config) !void {
         .InX = config.flow_control == .software,
         .RtsControl = config.flow_control == .hardware,
     };
-    dcb.ByteSize = 5 + @as(windows.BYTE, @intFromEnum(config.data_bits));
-    dcb.Parity = @intFromEnum(config.parity);
+    dcb.ByteSize = 5 + @as(windows.BYTE, @backingInt(config.data_bits));
+    dcb.Parity = @backingInt(config.parity);
     dcb.StopBits = if (config.stop_bits == .two) 2 else 0;
     dcb.XonChar = 0x11;
     dcb.XoffChar = 0x13;
@@ -704,8 +703,7 @@ fn CreateEventEx(
     flags: windows.DWORD,
     desired_access: windows.DWORD,
 ) (Wtf8ToWtf16Error || error{Unexpected})!windows.HANDLE {
-    var path: [windows.PATH_MAX_WIDE:0]u16 =
-        .{0} ** windows.PATH_MAX_WIDE;
+    var path: [windows.PATH_MAX_WIDE:0]u16 = @splat(0);
     const path_len = try windows.wtf8ToWtf16Le(&path, name);
     const handle = CreateEventExW(
         attributes,
