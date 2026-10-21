@@ -6,25 +6,19 @@ const linux = std.os.linux;
 pub const BaudRate = b: {
     const ti = @typeInfo(linux.speed_t).@"enum";
     @setEvalBranchQuota(3_874);
-    var field_names: [ti.fields.len][]const u8 = undefined;
-    var field_values: [ti.fields.len]ti.tag_type = undefined;
-    for (ti.fields, 0..) |field, i| {
-        field_names[i] = field.name;
-        field_values[i] = std.fmt.parseInt(
-            ti.tag_type,
-            field.name[1..],
-            10,
-        ) catch {
+    var field_values: [ti.field_names.len]ti.tag_type = undefined;
+    for (ti.field_names, &field_values) |name, *value| {
+        value.* = std.fmt.parseInt(ti.tag_type, name[1..], 10) catch {
             @compileError("invalid baud rate tag");
         };
     }
-    break :b @Enum(ti.tag_type, .nonexhaustive, &field_names, &field_values);
+    break :b @Enum(ti.tag_type, .nonexhaustive, ti.field_names, &field_values);
 };
 
 pub fn open(
     io: std.Io,
     path: []const u8,
-    flags: std.Io.File.OpenFlags,
+    flags: std.Io.Dir.OpenFileOptions,
 ) std.Io.File.OpenError!std.Io.File {
     var result = try std.Io.Dir.cwd().openFile(io, path, flags);
     errdefer result.close();
@@ -62,18 +56,19 @@ pub fn configure(
 
     settings.cflag.CREAD = true;
     settings.cflag.CSTOPB = config.stop_bits == .two;
-    settings.cflag.CSIZE = @enumFromInt(@intFromEnum(config.data_bits));
+    settings.cflag.CSIZE =
+        @fromBackingInt(@intCast(@backingInt(config.data_bits)));
 
     configureBaudRate(&settings, config.baud_rate, config.input_baud_rate);
     configureParity(&settings, config.parity);
     configureFlowControl(&settings, config.flow_control);
 
     // Minimum arrived bytes before read returns.
-    settings.cc[@intFromEnum(linux.V.MIN)] = 0;
+    settings.cc[@backingInt(linux.V.MIN)] = 0;
     // Inter-byte timeout before read returns.
-    settings.cc[@intFromEnum(linux.V.TIME)] = 0;
-    settings.cc[@intFromEnum(linux.V.START)] = 0x11;
-    settings.cc[@intFromEnum(linux.V.STOP)] = 0x13;
+    settings.cc[@backingInt(linux.V.TIME)] = 0;
+    settings.cc[@backingInt(linux.V.START)] = 0x11;
+    settings.cc[@backingInt(linux.V.STOP)] = 0x13;
 
     try std.posix.tcsetattr(port.handle, .NOW, settings);
     return orig_termios;
@@ -104,15 +99,16 @@ pub fn configureBaudRate(
     else
         custom_out;
 
-    var out_bits = @intFromEnum(baud_rate);
-    var in_bits = @intFromEnum(if (input_baud_rate) |ibr| ibr else baud_rate);
+    var out_bits = @backingInt(baud_rate);
+    var in_bits = @backingInt(if (input_baud_rate) |ibr| ibr else baud_rate);
 
-    inline for (@typeInfo(BaudRate).@"enum".fields) |field| {
-        if (out_bits == field.value) {
-            out_bits = @intFromEnum(@field(linux.speed_t, field.name));
+    const baud_rates = @typeInfo(BaudRate).@"enum";
+    inline for (baud_rates.field_names, baud_rates.field_values) |name, value| {
+        if (out_bits == value) {
+            out_bits = @backingInt(@field(linux.speed_t, name));
         }
-        if (in_bits == field.value) {
-            in_bits = @intFromEnum(@field(linux.speed_t, field.name));
+        if (in_bits == value) {
+            in_bits = @backingInt(@field(linux.speed_t, name));
         }
     }
 
@@ -222,31 +218,39 @@ fn openVirtualPorts(
     master_port: *std.Io.File,
     slave_port: *std.Io.File,
 ) !void {
-    const c = @cImport({
-        @cDefine("_XOPEN_SOURCE", "700");
-        @cInclude("stdlib.h");
-        @cInclude("fcntl.h");
-        @cInclude("unistd.h");
-    });
-
     master_port.* = try open(io, "/dev/ptmx", .{ .mode = .read_write });
     errdefer master_port.close(io);
 
-    if (c.grantpt(master_port.handle) < 0 or
-        c.unlockpt(master_port.handle) < 0)
-        return error.MasterPseudoTerminalSetupError;
-
-    const slave_name = c.ptsname(master_port.handle) orelse
-        return error.SlavePseudoTerminalSetupError;
-    const slave_name_len = std.mem.len(slave_name);
-    if (slave_name_len == 0)
-        return error.SlavePseudoTerminalSetupError;
-
-    slave_port.* = try open(
-        io,
-        slave_name[0..slave_name_len],
-        .{ .mode = .read_write },
+    // `unlockpt` and `ptsname` without libc. `grantpt` has nothing to do on
+    // devpts.
+    var lock: c_int = 0;
+    const unlock_rc = linux.ioctl(
+        master_port.handle,
+        linux.T.IOCSPTLCK,
+        @intFromPtr(&lock),
     );
+    if (linux.errno(unlock_rc) != .SUCCESS) {
+        return error.MasterPseudoTerminalSetupError;
+    }
+    var number: c_uint = undefined;
+    const number_rc = linux.ioctl(
+        master_port.handle,
+        linux.T.IOCGPTN,
+        @intFromPtr(&number),
+    );
+    if (linux.errno(number_rc) != .SUCCESS) {
+        return error.SlavePseudoTerminalSetupError;
+    }
+    var name_buffer: [32]u8 = undefined;
+    const slave_name = std.fmt.bufPrint(
+        &name_buffer,
+        "/dev/pts/{d}",
+        .{number},
+    ) catch {
+        return error.SlavePseudoTerminalSetupError;
+    };
+
+    slave_port.* = try open(io, slave_name, .{ .mode = .read_write });
 }
 
 test "software flow control" {
@@ -408,7 +412,9 @@ test "custom baud rate" {
     defer master.close(io);
     defer slave.close(io);
 
-    const config: serialport.Config = .{ .baud_rate = @enumFromInt(7667) };
+    const config: serialport.Config = .{
+        .baud_rate = @fromBackingInt(@intCast(7667)),
+    };
     const orig_master = try configure(master, config);
     defer std.posix.tcsetattr(master.handle, .NOW, orig_master) catch {};
     const orig_slave = try configure(slave, config);
